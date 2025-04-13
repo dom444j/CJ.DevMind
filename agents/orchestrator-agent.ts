@@ -1,257 +1,451 @@
-import { BaseAgent } from './base-agent';
-import { ArchitectAgent } from './architect-agent';
+import { BaseAgent, ContextoProyecto } from './base-agent'; // Ajusta la ruta
+import { MemoryAgent } from './memory-agent';
+import { DashboardAgent } from './dashboard-agent';
+import { QuestionAgent } from './question-agent';
 import { VisionAgent } from './vision-agent';
+import { ArchitectAgent } from './architect-agent';
+import { IntegrationAgent } from './integration-agent';
+import { LogicAgent } from './logic-agent';
+import { DatabaseAgent } from './database-agent';
+import { APIAgent } from './api-agent';
+import { AnalyticsAgent } from './analytics-agent';
+// Importación de agentes nuevos
+import { StyleAgent } from './style-agent';
+import { TestAgent } from './test-agent';
+import { SelfImprovementAgent } from './self-improvement-agent';
+import { CodeReviewAgent } from './code-review-agent';
+import { ComponentAgent } from './component-agent';
+import { UIDesignAgent } from './ui-design-agent';
+import { LayoutAgent } from './layout-agent';
+import { FrontendSyncAgent } from './frontend-sync-agent';
+import { SecurityAgent } from './security-agent';
+import { PerformanceAgent } from './performance-agent';
 import { RefactorAgent } from './refactor-agent';
+import { DevOpsAgent } from './devops-agent';
+import { MonitorAgent } from './monitor-agent';
 import { DocAgent } from './doc-agent';
-import fs from 'fs';
-import path from 'path';
+import { BusinessAgent } from './business-agent';
+import { MarketAgent } from './market-agent';
+import { LaunchAgent } from './launch-agent';
+import { ExtensionAgent } from './extension-agent';
+import { RiskManagementAgent } from './risk-management-agent';
+import { NewsAnalysisAgent } from './news-analysis-agent';
+import { AlertAgent } from './alert-agent';
 
-/**
- * Orchestrator Agent - Coordina el trabajo entre todos los agentes
- * 
- * Este agente es responsable de:
- * 1. Descomponer proyectos complejos en tareas específicas
- * 2. Asignar tareas a los agentes especializados
- * 3. Gestionar dependencias entre tareas
- * 4. Resolver conflictos entre agentes
- * 5. Mantener una visión global del progreso
- */
+interface ProjectState {
+  id: string;
+  description: string;
+  status: 'not_started' | 'in_progress' | 'completed' | 'failed';
+  created: string;
+  lastUpdated: string;
+  currentStep: number;
+  totalSteps: number;
+  agentProgress: Record<string, number>;
+  overallProgress: number;
+  lastError?: { agent: string; timestamp: string; message: string; context?: string };
+}
+
+interface WorkflowStep {
+  id: number;
+  agentType: string;
+  input: string;
+  status: 'queued' | 'started' | 'completed' | 'failed';
+  timestamp: string;
+  output?: string;
+  error?: string;
+}
+
+interface WorkflowPlan {
+  steps: {
+    id: string;
+    agent: string;
+    input: string;
+    description: string;
+    dependsOn?: string | string[];
+    priority: number;
+  }[];
+}
+
+interface QueuedExecution {
+  agentType: string;
+  input: string;
+  priority: number;
+  resolve: (value: string) => void;
+  reject: (error: Error) => void;
+}
+
+interface DependencyGraph {
+  dependencies: number[][]; // Para cada paso, lista de pasos de los que depende
+  dependents: number[][];  // Para cada paso, lista de pasos que dependen de él
+}
+
 export class OrchestratorAgent extends BaseAgent {
-  private agents: Map<string, BaseAgent>;
-  private taskQueue: Array<{id: string, type: string, description: string, dependencies: string[], status: string}>;
-  private projectPath: string;
-  
-  constructor() {
-    super('Orchestrator Agent');
-    
-    // Inicializar agentes disponibles
-    this.agents = new Map();
-    this.agents.set('vision', new VisionAgent());
-    this.agents.set('architect', new ArchitectAgent());
-    this.agents.set('refactor', new RefactorAgent());
-    this.agents.set('doc', new DocAgent());
-    
-    // Inicializar cola de tareas
-    this.taskQueue = [];
-    
-    // Directorio del proyecto actual
-    this.projectPath = process.cwd();
+  private projectState: ProjectState;
+  private workflowHistory: WorkflowStep[] = [];
+  private agentRegistry: Record<string, any>;
+  private parallelExecutionLimit: number = 3;
+  private activeExecutions: number = 0;
+  private executionQueue: QueuedExecution[] = [];
+  private memoryAgent: MemoryAgent;
+  private dashboardAgent: DashboardAgent;
+  private selfImprovementAgent: SelfImprovementAgent;
+
+  constructor(userId: string) {
+    super(userId);
+    this.agentName = 'OrchestratorAgent';
+    this.projectState = this.loadProjectState();
+    this.memoryAgent = new MemoryAgent();
+    this.dashboardAgent = new DashboardAgent();
+    this.selfImprovementAgent = new SelfImprovementAgent(this.userId);
+
+    // Registro de agentes actualizado para incluir los 30 agentes especializados
+    this.agentRegistry = {
+      // Meta-Nivel
+      'question': new QuestionAgent(this.userId),
+      'vision': new VisionAgent(this.userId),
+      'architect': new ArchitectAgent(this.userId),
+      'extension': new ExtensionAgent(this.userId),
+      
+      // Frontend
+      'uiDesign': new UIDesignAgent(this.userId),
+      'layout': new LayoutAgent(this.userId),
+      'component': new ComponentAgent(this.userId),
+      'frontendSync': new FrontendSyncAgent(this.userId),
+      'style': new StyleAgent(this.userId),
+      
+      // Backend
+      'api': new APIAgent(this.userId),
+      'logic': new LogicAgent(this.userId),
+      'database': new DatabaseAgent(this.userId),
+      'integration': new IntegrationAgent(this.userId),
+      
+      // Calidad
+      'testing': new TestAgent(this.userId),
+      'security': new SecurityAgent(this.userId),
+      'performance': new PerformanceAgent(this.userId),
+      'refactor': new RefactorAgent(this.userId),
+      'test': new TestAgent(this.userId),
+      'selfImprovement': this.selfImprovementAgent,
+      'codeReview': new CodeReviewAgent(this.userId),
+      
+      // Infraestructura
+      'devops': new DevOpsAgent(this.userId),
+      'monitor': new MonitorAgent(this.userId),
+      'dashboard': this.dashboardAgent,
+      'analytics': new AnalyticsAgent(this.userId),
+      
+      // Documentación
+      'doc': new DocAgent(this.userId),
+      'memory': this.memoryAgent,
+      
+      // Negocio
+      'business': new BusinessAgent(this.userId),
+      'market': new MarketAgent(this.userId),
+      'launch': new LaunchAgent(this.userId),
+      
+      // Otros
+      'risk': new RiskManagementAgent(this.userId),
+      'news': new NewsAnalysisAgent(this.userId),
+      'alert': new AlertAgent(this.userId),
+    };
   }
-  
-  /**
-   * Ejecuta el Orchestrator Agent para coordinar un proyecto completo
-   * @param projectDescription Descripción del proyecto a coordinar
-   */
-  async run(projectDescription: string): Promise<void> {
-    console.log(`🔄 Orchestrator Agent iniciando coordinación para: "${projectDescription}"`);
+
+  async run(contexto: ContextoProyecto, description: string): Promise<void> {
+    if (contexto.licencia === 'Community' && description.includes('complex')) {
+      throw new Error('Community Edition no soporta proyectos complejos');
+    }
+
+    await this.registrarActividad(contexto, 'iniciando OrchestratorAgent', { description });
+
+    try {
+      this.initializeProjectState(contexto, description);
+      await this.dashboardAgent.actualizarWebview({
+        proyectoId: contexto.id,
+        estado: 'proyecto iniciado',
+        descripcion: description,
+      });
+
+      // Verificar si se necesitan extensiones para este proyecto
+      await this.checkForExtensions(contexto, description);
+
+      const workflow = await this.planWorkflow(contexto, description);
+      await this.executeWorkflow(contexto, workflow);
+      await this.finalizeProject(contexto);
+    } catch (error) {
+      await this.handleProjectError(contexto, error as Error);
+      throw error;
+    }
+  }
+
+  // Nuevo método para verificar si se necesitan extensiones
+  private async checkForExtensions(contexto: ContextoProyecto, description: string): Promise<void> {
+    if (contexto.licencia === 'Community') return; // Solo disponible en licencias Professional y Enterprise
     
-    // Leer contexto relevante
-    const coreContext = this.readContext('core.md');
-    const rulesContext = this.readContext('rules.md');
-    const modulesContext = this.readContext('modules.md');
+    const extensionAgent = this.agentRegistry['extension'] as ExtensionAgent;
+    const requiredExtensions = await extensionAgent.analyzeRequirements(contexto, description);
     
-    // Crear plan de proyecto con LLM
-    const planPrompt = `
-    # Contexto del Proyecto
-    ${coreContext}
-    
-    # Reglas Arquitectónicas
-    ${rulesContext}
-    
-    # Módulos Disponibles
-    ${modulesContext}
-    
-    # Tarea de Orchestrator Agent
-    Actúa como el Orchestrator Agent de CJ.DevMind. Tu tarea es crear un plan detallado para el siguiente proyecto:
-    
-    "${projectDescription}"
-    
-    Proporciona:
-    1. Desglose del proyecto en tareas específicas
-    2. Asignación de cada tarea al agente más adecuado (vision, architect, refactor, doc)
-    3. Dependencias entre tareas (qué debe completarse antes)
-    4. Timeline estimado para completar el proyecto
-    5. Puntos de decisión que requieren intervención humana
-    
-    Formatea tu respuesta como JSON con la siguiente estructura:
+    if (requiredExtensions.length > 0) {
+      await this.dashboardAgent.actualizarWebview({
+        proyectoId: contexto.id,
+        estado: 'instalando extensiones',
+        detalles: requiredExtensions,
+      });
+      
+      for (const ext of requiredExtensions) {
+        await extensionAgent.installExtension(contexto, ext);
+      }
+    }
+  }
+
+  private initializeProjectState(contexto: ContextoProyecto, description: string): void {
+    this.projectState = {
+      id: contexto.id,
+      description,
+      status: 'in_progress',
+      created: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      currentStep: 0,
+      totalSteps: 0,
+      agentProgress: {},
+      overallProgress: 0,
+    };
+    contexto.nombre = description;
+    this.saveProjectState(contexto);
+  }
+
+  private async planWorkflow(contexto: ContextoProyecto, description: string): Promise<WorkflowPlan> {
+    const prompt = `
+    Genera un plan de flujo de trabajo para el proyecto "${description}" con base en el contexto:
+    ${JSON.stringify(contexto, null, 2)}
+
+    Incluye pasos para:
+    1. Recolectar requisitos (QuestionAgent)
+    2. Generar blueprint (VisionAgent)
+    3. Diseñar arquitectura (ArchitectAgent)
+    4. Diseñar UI (UIDesignAgent)
+    5. Crear estilos (StyleAgent)
+    6. Implementar layouts (LayoutAgent)
+    7. Crear componentes (ComponentAgent)
+    8. Sincronizar frontend (FrontendSyncAgent)
+    9. Implementar módulos backend (IntegrationAgent, LogicAgent, DatabaseAgent, APIAgent)
+    10. Realizar pruebas (TestAgent)
+    11. Revisar código (CodeReviewAgent)
+    12. Optimizar rendimiento (PerformanceAgent)
+    13. Verificar seguridad (SecurityAgent)
+    14. Refactorizar si es necesario (RefactorAgent)
+    15. Configurar infraestructura (DevOpsAgent)
+    16. Monitorear (MonitorAgent)
+    17. Analizar datos (AnalyticsAgent)
+    18. Gestionar riesgos (RiskManagementAgent)
+    19. Generar documentación (DocAgent)
+    20. Preparar lanzamiento (LaunchAgent)
+    21. Analizar mercado (MarketAgent)
+    22. Planificar negocio (BusinessAgent)
+    23. Mejorar automáticamente (SelfImprovementAgent)
+
+    Formato: JSON con la estructura:
     {
-      "projectName": "Nombre del proyecto",
-      "description": "Descripción detallada",
-      "tasks": [
+      "steps": [
         {
-          "id": "task-1",
-          "type": "vision|architect|refactor|doc",
-          "description": "Descripción de la tarea",
-          "dependencies": ["id-de-tarea-previa"],
-          "estimatedTime": "2h"
-        }
-      ],
-      "humanDecisionPoints": [
-        {
-          "afterTask": "task-id",
-          "description": "Qué debe decidir el humano"
+          "id": "step-1",
+          "agent": "agentName",
+          "input": "Entrada para el agente",
+          "description": "Descripción del paso",
+          "dependsOn": ["step-id"],
+          "priority": 1
         }
       ]
     }
     `;
-    
-    // En modo real, consultaríamos al LLM
-    let projectPlan;
-    
-    if (process.env.DEVMIND_REAL_MODE === 'true') {
+
+    const result = await this.ejecutarPrompt(contexto, prompt);
+    return JSON.parse(result) as WorkflowPlan;
+  }
+
+  private async executeWorkflow(contexto: ContextoProyecto, plan: WorkflowPlan): Promise<void> {
+    const dependencyGraph = this.analyzeDependencies(plan);
+    const executionGroups = this.identifyParallelSteps(dependencyGraph);
+
+    for (let groupIndex = 0; groupIndex < executionGroups.length; groupIndex++) {
+      const group = executionGroups[groupIndex];
+      const groupPromises = group.map(async (stepIndex) => {
+        const step = plan.steps[stepIndex];
+        this.projectState.currentStep = stepIndex + 1;
+        this.projectState.totalSteps = plan.steps.length;
+        this.saveProjectState(contexto);
+
+        try {
+          const result = await this.executeAgentWithQueue(contexto, step.agent, step.input, step.priority);
+          this.projectState.agentProgress[step.agent] = 100;
+          this.calculateOverallProgress();
+          this.saveProjectState(contexto);
+          return result;
+        } catch (error) {
+          const resolved = await this.resolveConflict(contexto, step, error as Error);
+          if (!resolved) throw error;
+          return 'Conflict resolved';
+        }
+      });
+
+      await Promise.all(groupPromises);
+      await this.dashboardAgent.actualizarWebview({
+        proyectoId: contexto.id,
+        estado: `grupo ${groupIndex + 1}/${executionGroups.length} completado`,
+        progreso: this.projectState.overallProgress,
+      });
+    }
+  }
+
+  private async executeAgentWithQueue(contexto: ContextoProyecto, agentType: string, input: string, priority: number): Promise<string> {
+    if (this.activeExecutions < this.parallelExecutionLimit) {
+      this.activeExecutions++;
       try {
-        const result = await this.queryLLM(planPrompt);
-        projectPlan = JSON.parse(result);
-        
-        // Guardar el plan en el directorio de contexto
-        const planPath = path.join(this.contextPath, 'project-plan.json');
-        fs.writeFileSync(planPath, JSON.stringify(projectPlan, null, 2), 'utf-8');
-        console.log(`✅ Plan de proyecto guardado en ${planPath}`);
-      } catch (error) {
-        console.error('❌ Error generando plan de proyecto:', error);
-        return;
+        return await this.executeAgent(contexto, agentType, input);
+      } finally {
+        this.activeExecutions--;
+        this.processNextInQueue(contexto);
       }
     } else {
-      // Modo simulado para desarrollo
-      console.log('🧪 Ejecutando en modo simulado');
-      
-      // Plan simulado
-      projectPlan = {
-        projectName: `Proyecto: ${projectDescription.slice(0, 30)}...`,
-        description: `Implementación completa de ${projectDescription}`,
-        tasks: [
-          {
-            id: "task-1",
-            type: "vision",
-            description: "Definir requisitos detallados del proyecto",
-            dependencies: [],
-            estimatedTime: "1h"
-          },
-          {
-            id: "task-2",
-            type: "architect",
-            description: "Diseñar arquitectura global del sistema",
-            dependencies: ["task-1"],
-            estimatedTime: "2h"
-          },
-          {
-            id: "task-3",
-            type: "refactor",
-            description: "Preparar estructura base de carpetas",
-            dependencies: ["task-2"],
-            estimatedTime: "1h"
-          },
-          {
-            id: "task-4",
-            type: "doc",
-            description: "Documentar arquitectura inicial",
-            dependencies: ["task-2", "task-3"],
-            estimatedTime: "1h"
-          }
-        ],
-        humanDecisionPoints: [
-          {
-            afterTask: "task-2",
-            description: "Revisar y aprobar la arquitectura propuesta"
-          }
-        ]
-      };
-      
-      // Guardar el plan simulado
-      const planPath = path.join(this.contextPath, 'project-plan.json');
-      fs.writeFileSync(planPath, JSON.stringify(projectPlan, null, 2), 'utf-8');
-      console.log(`✅ Plan de proyecto simulado guardado en ${planPath}`);
-    }
-    
-    // Cargar tareas en la cola
-    this.taskQueue = projectPlan.tasks.map(task => ({
-      ...task,
-      status: 'pending'
-    }));
-    
-    // Mostrar plan de proyecto
-    console.log('\n📋 Plan de Proyecto:\n');
-    console.log(`Nombre: ${projectPlan.projectName}`);
-    console.log(`Descripción: ${projectPlan.description}`);
-    console.log('\nTareas:');
-    projectPlan.tasks.forEach(task => {
-      console.log(`- [${task.type}] ${task.description} (${task.estimatedTime})`);
-      if (task.dependencies.length > 0) {
-        console.log(`  Dependencias: ${task.dependencies.join(', ')}`);
-      }
-    });
-    
-    console.log('\nPuntos de Decisión Humana:');
-    projectPlan.humanDecisionPoints.forEach(point => {
-      console.log(`- Después de: ${point.afterTask}`);
-      console.log(`  ${point.description}`);
-    });
-    
-    // Preguntar si se desea ejecutar el plan
-    console.log('\n⚠️ Este es un plan simulado. En una implementación completa, se ejecutarían las tareas automáticamente.');
-    console.log('Para ejecutar manualmente, usa los comandos específicos de cada agente:');
-    console.log('- cj vision "descripción"');
-    console.log('- cj architect "descripción"');
-    console.log('- cj refactor "tarea"');
-    console.log('- cj doc "ruta/al/módulo"');
-  }
-  
-  /**
-   * Ejecuta la siguiente tarea disponible en la cola
-   * @returns Resultado de la tarea
-   */
-  private async executeNextTask(): Promise<boolean> {
-    // Encontrar tareas sin dependencias pendientes
-    const availableTasks = this.taskQueue.filter(task => {
-      if (task.status !== 'pending') return false;
-      
-      // Verificar que todas las dependencias estén completadas
-      return task.dependencies.every(depId => {
-        const depTask = this.taskQueue.find(t => t.id === depId);
-        return depTask && depTask.status === 'completed';
+      return new Promise((resolve, reject) => {
+        this.executionQueue.push({ agentType, input, priority, resolve, reject });
+        this.executionQueue.sort((a, b) => a.priority - b.priority);
       });
-    });
-    
-    if (availableTasks.length === 0) {
-      console.log('✅ No hay más tareas disponibles para ejecutar');
-      return false;
-    }
-    
-    // Tomar la primera tarea disponible
-    const task = availableTasks[0];
-    console.log(`🔄 Ejecutando tarea: ${task.description} [${task.type}]`);
-    
-    // Marcar como en progreso
-    task.status = 'in-progress';
-    
-    try {
-      // Obtener el agente correspondiente
-      const agent = this.agents.get(task.type);
-      
-      if (!agent) {
-        throw new Error(`Agente no encontrado para el tipo: ${task.type}`);
-      }
-      
-      // Ejecutar la tarea con el agente
-      await agent.run(task.description);
-      
-      // Marcar como completada
-      task.status = 'completed';
-      console.log(`✅ Tarea completada: ${task.description}`);
-      
-      return true;
-    } catch (error) {
-      // Marcar como fallida
-      task.status = 'failed';
-      console.error(`❌ Error en tarea ${task.id}:`, error);
-      return false;
     }
   }
-}
 
-// Función auxiliar para mantener compatibilidad con código existente
-export async function orchestratorAgent(projectDescription: string): Promise<string> {
-  const agent = new OrchestratorAgent();
-  await agent.run(projectDescription);
-  return "Ejecutado con éxito";
+  private async executeAgent(contexto: ContextoProyecto, agentType: string, input: string): Promise<string> {
+    if (!this.agentRegistry[agentType]) throw new Error(`Agente "${agentType}" no encontrado`);
+
+    const stepId = this.recordWorkflowStep({ agentType, input, status: 'started', timestamp: new Date().toISOString() });
+    const agent = this.agentRegistry[agentType];
+    await agent.run(contexto, input);
+
+    // Añadir revisión de código automática después de pasos de implementación
+    if (['component', 'api', 'logic', 'database', 'integration'].includes(agentType)) {
+      await this.runCodeReview(contexto, agentType, input);
+    }
+
+    this.updateWorkflowStep(stepId, { status: 'completed', timestamp: new Date().toISOString() });
+    return `${agentType} completado`;
+  }
+
+  // Nuevo método para ejecutar revisión de código
+  private async runCodeReview(contexto: ContextoProyecto, agentType: string, input: string): Promise<void> {
+    if (contexto.licencia === 'Community') return; // Solo disponible en licencias Professional y Enterprise
+    
+    const codeReviewAgent = this.agentRegistry['codeReview'] as CodeReviewAgent;
+    const reviewInput = `Revisar código generado por ${agentType}: ${input}`;
+    
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      estado: `revisando código de ${agentType}`,
+    });
+    
+    await codeReviewAgent.run(contexto, reviewInput);
+  }
+
+  private async finalizeProject(contexto: ContextoProyecto): Promise<void> {
+    this.projectState.status = 'completed';
+    this.projectState.lastUpdated = new Date().toISOString();
+    this.saveProjectState(contexto);
+
+    // Ejecutar mejora automática al finalizar el proyecto
+    await this.runSelfImprovement(contexto);
+
+    await this.generateFinalReport(contexto);
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      estado: 'proyecto completado',
+      progreso: 100,
+    });
+  }
+
+  // Nuevo método para ejecutar mejora automática
+  private async runSelfImprovement(contexto: ContextoProyecto): Promise<void> {
+    if (contexto.licencia === 'Community') return; // Solo disponible en licencias Professional y Enterprise
+    
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      estado: 'optimizando para futuros proyectos',
+    });
+    
+    await this.selfImprovementAgent.run(contexto, this.projectState.description);
+  }
+
+  async proponerMejora(contexto: ContextoProyecto): Promise<string | null> {
+    // Primero consultamos al SelfImprovementAgent para sugerencias
+    if (contexto.licencia !== 'Community') {
+      const sugerencia = await this.selfImprovementAgent.suggestImprovement(contexto, this.projectState);
+      if (sugerencia) {
+        await this.registrarActividad(contexto, 'mejora propuesta por SelfImprovementAgent', { sugerencia });
+        return sugerencia;
+      }
+    }
+
+    // Lógica existente como fallback
+    const historial = await this.memoryAgent.buscar<WorkflowStep>({ tipo: 'workflow' });
+    const fallos = historial.filter(h => h.status === 'failed');
+
+    if (fallos.length > 3) {
+      const agentesFrecuentes = fallos.reduce((acc, f) => {
+        acc[f.agentType] = (acc[f.agentType] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      const agenteProblematico = Object.entries(agentesFrecuentes).find(([, count]) => count > 2);
+      if (agenteProblematico) {
+        const [agente] = agenteProblematico;
+        this.parallelExecutionLimit = Math.max(1, this.parallelExecutionLimit - 1);
+        await this.registrarActividad(contexto, 'mejora propuesta', { agente, accion: 'reducir paralelismo' });
+        return `Reduciendo paralelismo a ${this.parallelExecutionLimit} por fallos en ${agente}`;
+      }
+    }
+
+    if (this.projectState.overallProgress < 50 && this.projectState.currentStep > 5) {
+      const prompt = `Optimiza el flujo de trabajo para el proyecto "${this.projectState.description}". Redefine prioridades de los pasos.`;
+      const nuevoPlan = await this.ejecutarPrompt(contexto, prompt);
+      await this.registrarActividad(contexto, 'mejora propuesta', { accion: 'redefinir prioridades' });
+      return 'Redefiniendo prioridades del flujo de trabajo';
+    }
+
+    return null;
+  }
+
+  private calculateOverallProgress(): void {
+    const progressValues = Object.values(this.projectState.agentProgress);
+    this.projectState.overallProgress = progressValues.length > 0
+      ? Math.round(progressValues.reduce((sum, value) => sum + value, 0) / progressValues.length)
+      : 0;
+  }
+
+  private loadProjectState(): ProjectState {
+    return {
+      id: '',
+      description: '',
+      status: 'not_started',
+      created: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      currentStep: 0,
+      totalSteps: 0,
+      agentProgress: {},
+      overallProgress: 0,
+    };
+  }
+
+  private saveProjectState(contexto: ContextoProyecto): void {
+    contexto.estado = this.projectState;
+    this.guardarContexto(contexto, join(process.cwd(), 'context', `${contexto.id}-state.json`));
+  }
+
+  private recordWorkflowStep(step: Omit<WorkflowStep, 'id'>): number {
+    const id = this.workflowHistory.length + 1;
+    this.workflowHistory.push({ ...step, id });
+    this.memoryAgent.store(step, { tipo: 'workflow', proyectoId: this.projectState.id });
+    return id;
+  }
+
+  private updateWorkflowStep(id: number, updates: Partial<WorkflowStep>): void {
+    const step = this.workflowHistory.find(s => s.id === id);
+    if (step) Object.assign(step, updates);
+  }
 }

@@ -1,144 +1,342 @@
-import { BaseAgent } from './base-agent';
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as vscode from 'vscode'; // Pa’ interacción con VS Code
+import { BaseAgent, ContextoProyecto } from './base-agent'; // Ajusta la ruta
+import { MemoryAgent } from './memory-agent'; // Suponemos que existe
+import { DashboardAgent } from './dashboard-agent'; // Pa’ reportes
 
-/**
- * Vision Agent - Traduce ideas humanas en requisitos técnicos viables
- * 
- * Este agente utiliza un cuestionario socrático para extraer requisitos
- * detallados de una idea inicial y generar un blueprint maestro.
- */
+interface SocraticQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  defaultOption: string;
+  dominio: string; // Ej. "trading", "general"
+}
+
+interface Blueprint {
+  idea: string;
+  modules: string[];
+  requirements: {
+    functional: string[];
+    nonFunctional: string[];
+  };
+  architectureDiagram: string;
+  roadmap: { phase: string; duration: string }[];
+  technologies: string[];
+  resources: { role: string; count: number }[];
+  estimatedTime: string;
+}
+
 export class VisionAgent extends BaseAgent {
-  constructor() {
-    super('Vision Agent');
+  private memoryAgent: MemoryAgent;
+  private dashboardAgent: DashboardAgent;
+  private interactiveMode: boolean = false;
+  private answers: Record<string, string> = {};
+  private currentBlueprint: Blueprint | null = null;
+  private socraticQuestions: SocraticQuestion[] = [
+    // General
+    { id: 'scale', question: '¿Cuál es la escala esperada del proyecto?', options: ['Pequeña (100s usuarios)', 'Media (1000s usuarios)', 'Grande (10,000+ usuarios)'], defaultOption: 'Media (1000s usuarios)', dominio: 'general' },
+    { id: 'complexity', question: '¿Qué nivel de complejidad tiene el proyecto?', options: ['Simple', 'Moderado', 'Complejo'], defaultOption: 'Moderado', dominio: 'general' },
+    { id: 'security', question: '¿Qué nivel de seguridad requiere?', options: ['Básico', 'Estándar', 'Alto'], defaultOption: 'Estándar', dominio: 'general' },
+    { id: 'integrations', question: '¿Requiere integración con sistemas externos?', options: ['No', 'Algunas APIs', 'Múltiples sistemas'], defaultOption: 'Algunas APIs', dominio: 'general' },
+    { id: 'deployment', question: '¿Dónde se desplegará?', options: ['Nube pública', 'On-premise', 'Híbrido'], defaultOption: 'Nube pública', dominio: 'general' },
+    // Trading
+    { id: 'dataSources', question: '¿Qué fuentes de datos necesitas?', options: ['Binance', 'Twitter/X', 'Ambas'], defaultOption: 'Ambas', dominio: 'trading' },
+    { id: 'strategies', question: '¿Qué estrategias de trading implementarás?', options: ['Scalping', 'Swing', 'Ambas'], defaultOption: 'Ambas', dominio: 'trading' },
+    { id: 'indicators', question: '¿Qué indicadores técnicos usarás?', options: ['RSI', 'MACD', 'Ambos'], defaultOption: 'Ambos', dominio: 'trading' },
+    { id: 'risk', question: '¿Qué nivel de gestión de riesgos necesitas?', options: ['Básico', 'Avanzado'], defaultOption: 'Avanzado', dominio: 'trading' },
+  ];
+
+  constructor(userId: string) {
+    super(userId);
+    this.agentName = 'VisionAgent';
+    this.memoryAgent = new MemoryAgent();
+    this.dashboardAgent = new DashboardAgent();
   }
-  
-  /**
-   * Ejecuta el cuestionario socrático para definir requisitos
-   * @param initialIdea La idea inicial del proyecto
-   */
-  async run(initialIdea: string): Promise<void> {
-    console.log(`🔍 Vision Agent analizando idea: "${initialIdea}"`);
-    
-    // Leer contexto relevante
-    const coreContext = this.readContext('core.md');
-    const rulesContext = this.readContext('rules.md');
-    
-    // Definir cuestionario socrático
-    const questions = [
-      {
-        id: 'scale',
-        question: '¿Cuál es la escala esperada del proyecto?',
-        options: ['Pequeña (100s usuarios)', 'Media (1000s usuarios)', 'Grande (10,000+ usuarios)'],
-        defaultOption: 'Media (1000s usuarios)'
-      },
-      {
-        id: 'complexity',
-        question: '¿Qué nivel de complejidad tiene el proyecto?',
-        options: ['Simple (pocos módulos)', 'Moderado (varios módulos interconectados)', 'Complejo (muchos módulos con relaciones complejas)'],
-        defaultOption: 'Moderado (varios módulos interconectados)'
-      },
-      {
-        id: 'security',
-        question: '¿Qué nivel de seguridad requiere el proyecto?',
-        options: ['Básico', 'Estándar (autenticación, autorización)', 'Alto (datos sensibles, transacciones)'],
-        defaultOption: 'Estándar (autenticación, autorización)'
-      },
-      {
-        id: 'ui',
-        question: '¿Qué tipo de interfaz de usuario necesita?',
-        options: ['Minimalista', 'Estándar', 'Compleja (muchas visualizaciones, dashboards)'],
-        defaultOption: 'Estándar'
-      },
-      {
-        id: 'integrations',
-        question: '¿Requiere integración con sistemas externos?',
-        options: ['No', 'Algunas APIs', 'Múltiples sistemas complejos'],
-        defaultOption: 'Algunas APIs'
-      }
-    ];
-    
-    // En modo real, consultaríamos al LLM y procesaríamos las respuestas
-    if (process.env.DEVMIND_REAL_MODE === 'true') {
-      const prompt = `
-      # Contexto del Proyecto
-      ${coreContext}
-      
-      # Reglas Arquitectónicas
-      ${rulesContext}
-      
-      # Tarea de Vision Agent
-      Actúa como el Vision Agent de CJ.DevMind. Tu tarea es traducir la siguiente idea en requisitos técnicos detallados mediante un cuestionario socrático.
-      
-      Idea inicial: "${initialIdea}"
-      
-      Realiza las siguientes preguntas al usuario y extrapola requisitos implícitos:
-      ${questions.map(q => `- ${q.question} (Opciones: ${q.options.join(', ')})`).join('\n')}
-      
-      Basado en las respuestas y tu análisis, genera:
-      1. Un blueprint maestro con módulos necesarios
-      2. Requisitos funcionales y no funcionales
-      3. Consideraciones de escalabilidad y seguridad
-      4. Roadmap evolutivo con fases de desarrollo
-      5. Tecnologías recomendadas justificadas
-      `;
-      
-      try {
-        const response = await this.queryLLM(prompt);
-        console.log('📋 Blueprint generado:');
-        console.log(response);
-        
-        // Guardar el blueprint en el directorio de contexto
-        const blueprintPath = path.join(this.contextPath, 'blueprint.md');
-        fs.writeFileSync(blueprintPath, response, 'utf-8');
-        console.log(`✅ Blueprint guardado en ${blueprintPath}`);
-        
-        return;
-      } catch (error) {
-        console.error('❌ Error consultando al LLM:', error);
-        throw error;
+
+  // Método principal para ejecutar el VisionAgent
+  async run(contexto: ContextoProyecto, spec: string): Promise<void> {
+    if (contexto.licencia === 'Community' && spec.includes('interactive')) {
+      throw new Error('Community Edition no soporta modo interactivo');
+    }
+
+    await this.registrarActividad(contexto, 'iniciando VisionAgent', { spec });
+
+    if (spec.startsWith('interactive:')) {
+      this.interactiveMode = true;
+      const idea = spec.substring('interactive:'.length).trim();
+      await this.runInteractiveQuestionnaire(contexto, idea);
+    } else if (spec.startsWith('evaluate:')) {
+      const ideaToEvaluate = spec.substring('evaluate:'.length).trim();
+      await this.evaluateViability(contexto, ideaToEvaluate);
+    } else if (spec.startsWith('estimate:')) {
+      const projectToEstimate = spec.substring('estimate:'.length).trim();
+      await this.estimateResources(contexto, projectToEstimate);
+    } else if (spec.startsWith('refine:')) {
+      const feedback = spec.substring('refine:'.length).trim();
+      await this.refineBlueprint(contexto, feedback);
+    } else if (spec.startsWith('compare:')) {
+      const ideasToCompare = spec.substring('compare:'.length).trim();
+      await this.compareIdeas(contexto, ideasToCompare);
+    } else {
+      await this.generateBlueprint(contexto, spec);
+    }
+  }
+
+  // Cuestionario interactivo
+  private async runInteractiveQuestionnaire(contexto: ContextoProyecto, initialIdea: string): Promise<void> {
+    const questions = this.getSocraticQuestions(contexto.tags.includes('trading') ? 'trading' : 'general');
+    this.answers = {};
+
+    // Inicializar respuestas
+    questions.forEach(q => {
+      this.answers[q.id] = q.defaultOption;
+    });
+
+    // Recolectar respuestas
+    for (const q of questions) {
+      const respuesta = await vscode.window.showQuickPick(q.options, {
+        placeHolder: q.question,
+      });
+      this.answers[q.id] = respuesta || q.defaultOption;
+      await this.memoryAgent.store(
+        { pregunta: q.question, respuesta: this.answers[q.id] },
+        { tipo: 'respuesta', proyectoId: contexto.id }
+      );
+    }
+
+    await this.generateBlueprintFromAnswers(contexto, initialIdea);
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      blueprint: this.currentBlueprint,
+      estado: 'blueprint generado',
+    });
+  }
+
+  // Genera blueprint basado en la idea
+  private async generateBlueprint(contexto: ContextoProyecto, initialIdea: string): Promise<void> {
+    const questions = this.getSocraticQuestions(contexto.tags.includes('trading') ? 'trading' : 'general');
+    this.answers = {};
+    questions.forEach(q => this.answers[q.id] = q.defaultOption);
+
+    // Usa respuestas del contexto si están disponibles
+    const respuestasPrevias = await this.memoryAgent.buscar<{ pregunta: string; respuesta: string }>({
+      tipo: 'respuesta',
+      proyectoId: contexto.id,
+    });
+
+    for (const q of questions) {
+      const respuesta = respuestasPrevias.find(r => r.pregunta === q.question);
+      if (respuesta) this.answers[q.id] = respuesta.respuesta;
+    }
+
+    await this.generateBlueprintFromAnswers(contexto, initialIdea);
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      blueprint: this.currentBlueprint,
+      estado: 'blueprint generado',
+    });
+  }
+
+  // Genera blueprint basado en respuestas
+  private async generateBlueprintFromAnswers(contexto: ContextoProyecto, initialIdea: string): Promise<void> {
+    const prompt = `
+    # Tarea de VisionAgent
+    Genera un blueprint técnico para el proyecto "${initialIdea}" con base en:
+    - Idea: ${initialIdea}
+    - Respuestas: ${JSON.stringify(this.answers)}
+    - Contexto: ${JSON.stringify(contexto)}
+
+    Incluye:
+    1. Módulos necesarios
+    2. Requisitos funcionales y no funcionales
+    3. Diagrama de arquitectura (ASCII)
+    4. Roadmap con fases
+    5. Tecnologías recomendadas
+    6. Estimación de recursos y tiempos
+
+    Formato: JSON estructurado.
+    `;
+
+    const response = await this.ejecutarPrompt(contexto, prompt);
+    this.currentBlueprint = JSON.parse(response) as Blueprint;
+    contexto.idea = initialIdea;
+    contexto.modulos = this.currentBlueprint.modules;
+
+    await this.registrarActividad(contexto, 'blueprint generado', { blueprint: this.currentBlueprint });
+    await this.guardarContexto(contexto, path.join(process.cwd(), 'context', `${contexto.id}-blueprint.json`));
+  }
+
+  // Evalúa viabilidad
+  private async evaluateViability(contexto: ContextoProyecto, idea: string): Promise<void> {
+    const prompt = `
+    Evalúa la viabilidad técnica de la idea "${idea}" para el proyecto ${contexto.nombre}.
+    Incluye:
+    1. Viabilidad (1-10)
+    2. Desafíos técnicos
+    3. Tecnologías existentes
+    4. Brechas tecnológicas
+    5. Complejidad (1-10)
+    6. Recomendaciones
+
+    Formato: Markdown.
+    `;
+
+    const response = await this.ejecutarPrompt(contexto, prompt);
+    const evaluationPath = path.join(process.cwd(), 'context', `${contexto.id}-viability.md`);
+    fs.writeFileSync(evaluationPath, response, 'utf-8');
+
+    await this.registrarActividad(contexto, 'viabilidad evaluada', { idea, evaluationPath });
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      viabilidad: response,
+      estado: 'viabilidad evaluada',
+    });
+  }
+
+  // Estima recursos
+  private async estimateResources(contexto: ContextoProyecto, project: string): Promise<void> {
+    if (!this.currentBlueprint) {
+      throw new Error('No hay blueprint para estimar recursos');
+    }
+
+    const prompt = `
+    Estima recursos para el proyecto "${project}" con blueprint ${JSON.stringify(this.currentBlueprint)}.
+    Incluye:
+    1. Recursos humanos
+    2. Tiempo por fase
+    3. Infraestructura
+    4. Costos
+    5. Factores de riesgo
+    6. Recomendaciones
+
+    Formato: Markdown con tablas.
+    `;
+
+    const response = await this.ejecutarPrompt(contexto, prompt);
+    const estimationPath = path.join(process.cwd(), 'context', `${contexto.id}-resources.md`);
+    fs.writeFileSync(estimationPath, response, 'utf-8');
+
+    await this.registrarActividad(contexto, 'recursos estimados', { project, estimationPath });
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      estimacion: response,
+      estado: 'recursos estimados',
+    });
+  }
+
+  // Refina blueprint
+  private async refineBlueprint(contexto: ContextoProyecto, feedback: string): Promise<void> {
+    if (!this.currentBlueprint) {
+      throw new Error('No hay blueprint para refinar');
+    }
+
+    const prompt = `
+    Refina el blueprint ${JSON.stringify(this.currentBlueprint)} con el feedback: "${feedback}".
+    Mantén la estructura pero ajusta según el feedback.
+    Formato: JSON.
+    `;
+
+    const response = await this.ejecutarPrompt(contexto, prompt);
+    this.currentBlueprint = JSON.parse(response) as Blueprint;
+
+    await this.registrarActividad(contexto, 'blueprint refinado', { feedback, blueprint: this.currentBlueprint });
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      blueprint: this.currentBlueprint,
+      estado: 'blueprint refinado',
+    });
+  }
+
+  // Compara ideas
+  private async compareIdeas(contexto: ContextoProyecto, ideas: string): Promise<void> {
+    const ideaList = ideas.split('|').map(idea => idea.trim());
+    const prompt = `
+    Compara las ideas: ${ideaList.join(' vs ')}.
+    Incluye:
+    1. Viabilidad técnica
+    2. Ventajas/desventajas
+    3. Recursos
+    4. Escalabilidad
+    5. Riesgos
+    6. Recomendación
+
+    Formato: Markdown con tablas.
+    `;
+
+    const response = await this.ejecutarPrompt(contexto, prompt);
+    const comparisonPath = path.join(process.cwd(), 'context', `${contexto.id}-comparison.md`);
+    fs.writeFileSync(comparisonPath, response, 'utf-8');
+
+    await this.registrarActividad(contexto, 'ideas comparadas', { ideas: ideaList, comparisonPath });
+    await this.dashboardAgent.actualizarWebview({
+      proyectoId: contexto.id,
+      comparacion: response,
+      estado: 'ideas comparadas',
+    });
+  }
+
+  // Auto-mejora
+  async proponerMejora(contexto: ContextoProyecto): Promise<string | null> {
+    const respuestasPrevias = await this.memoryAgent.buscar<{ pregunta: string; respuesta: string }>({
+      tipo: 'respuesta',
+      proyectoId: contexto.id,
+    });
+
+    // Si muchas respuestas son las mismas, sugiere usarlas por default
+    const patrones: { pregunta: string; respuesta: string; frecuencia: number }[] = [];
+    for (const q of this.socraticQuestions) {
+      const respuestas = respuestasPrevias.filter(r => r.pregunta === q.question);
+      const respuestaComun = this.encontrarRespuestaComun(respuestas);
+      if (respuestaComun) {
+        patrones.push({
+          pregunta: q.question,
+          respuesta: respuestaComun,
+          frecuencia: respuestas.filter(r => r.respuesta === respuestaComun).length,
+        });
       }
     }
-    
-    // Modo simulado para desarrollo
-    console.log('🧪 Ejecutando en modo simulado');
-    console.log('📝 Cuestionario socrático:');
-    questions.forEach(q => {
-      console.log(`  - ${q.question}`);
-      console.log(`    Opciones: ${q.options.join(', ')}`);
-      console.log(`    Selección por defecto: ${q.defaultOption}`);
-    });
-    
-    // Generar blueprint simulado
-    const simulatedBlueprint = `
-    # Blueprint: ${initialIdea}
-    
-    ## Resumen
-    Este proyecto requiere una arquitectura de complejidad moderada con seguridad estándar,
-    diseñado para soportar miles de usuarios y algunas integraciones con APIs externas.
-    
-    ## Módulos Recomendados
-    - Frontend: Next.js con Tailwind CSS
-    - Backend: Node.js con Fastify
-    - Base de datos: PostgreSQL con Prisma
-    - Autenticación: JWT con NextAuth
-    
-    ## Consideraciones
-    - Escalabilidad: Diseño modular para crecimiento futuro
-    - Seguridad: Implementar autenticación y autorización basada en roles
-    - Rendimiento: Optimizar para carga moderada inicial
-    
-    ## Roadmap
-    1. Fase 1: Funcionalidades core y autenticación
-    2. Fase 2: Módulos principales e integraciones
-    3. Fase 3: Optimización y características avanzadas
-    `;
-    
-    console.log('📋 Blueprint simulado generado');
-    
-    // Guardar el blueprint simulado
-    const blueprintPath = path.join(this.contextPath, 'blueprint.md');
-    fs.writeFileSync(blueprintPath, simulatedBlueprint, 'utf-8');
-    console.log(`✅ Blueprint guardado en ${blueprintPath}`);
+
+    const patron = patrones.find(p => p.frecuencia > 3);
+    if (patron) {
+      this.socraticQuestions = this.socraticQuestions.map(q => {
+        if (q.question === patron.pregunta) {
+          return { ...q, defaultOption: patron.respuesta };
+        }
+        return q;
+      });
+      await this.registrarActividad(contexto, 'mejora propuesta', { patron });
+      return `Pregunta optimizada: ${patron.pregunta} con default ${patron.respuesta}`;
+    }
+
+    // Si el blueprint usa muchos tokens, optimiza el prompt
+    if (contexto.metricas.tokensUsados > 5000) {
+      const nuevoModelo = this.config.modelo === 'GPT-4' ? 'GPT-3.5' : 'Mistral';
+      this.config.modelo = nuevoModelo;
+      await this.registrarActividad(contexto, 'mejora propuesta', { nuevoModelo });
+      return `Cambiando a ${nuevoModelo} pa’ optimizar créditos`;
+    }
+
+    return null;
+  }
+
+  private encontrarRespuestaComun(respuestas: { pregunta: string; respuesta: string }[]): string | null {
+    const conteo: Record<string, number> = {};
+    let maxFrecuencia = 0;
+    let respuestaComun: string | null = null;
+
+    for (const r of respuestas) {
+      conteo[r.respuesta] = (conteo[r.respuesta] || 0) + 1;
+      if (conteo[r.respuesta] > maxFrecuencia) {
+        maxFrecuencia = conteo[r.respuesta];
+        respuestaComun = r.respuesta;
+      }
+    }
+
+    return respuestaComun;
+  }
+
+  private getSocraticQuestions(dominio: string): SocraticQuestion[] {
+    return this.socraticQuestions.filter(q => q.dominio === dominio || q.dominio === 'general');
   }
 }

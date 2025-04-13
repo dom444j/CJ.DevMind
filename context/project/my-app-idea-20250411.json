@@ -1,0 +1,37 @@
+{
+    "id": "my-app-idea-20250411",
+    "idea": "App para conectar freelancers con startups",
+    "objetivo": "Prototipo MVP para validación de mercado",
+    "escala": "PYME",
+    "presupuesto": "medio",
+    "tipo": "web app",
+    "modelo": "monetizable",
+    "referencia": "Fiverr, Upwork",
+    "fecha": "2025-04-11T20:15:00Z",
+    "estado": "exploración",
+    "generadoPor": "QuestionAgent",
+    "autor": {
+      "nombre": "Juan Pérez",
+      "rol": "Product Owner",
+      "email": "juan@startup.io"
+    },
+    "tags": ["startup", "freelancers", "marketplace", "prototipo", "mvp"],
+    "historial": [
+      {
+        "agente": "QuestionAgent",
+        "fecha": "2025-04-11T20:15:00Z",
+        "acciones": ["generó idea", "validó escala", "asignó etiquetas"]
+      },
+      {
+        "agente": "VisionAgent",
+        "fecha": "2025-04-11T20:30:00Z",
+        "acciones": ["construyó visión", "definió nodos principales"]
+      },
+      {
+        "agente": "ArchitectAgent",
+        "fecha": "2025-04-11T21:00:00Z",
+        "acciones": ["sugirió arquitectura", "relacionó módulos"]
+      }
+    ]
+  }
+  
